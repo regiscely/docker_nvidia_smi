@@ -1,62 +1,137 @@
+/************************************************************/
+/* This is a stream socket server sample program for UNIX   */
+/* domain sockets. This program listens for a connection    */
+/* from a client program, accepts it, reads data from the   */
+/* client, then sends data back to connected UNIX socket.   */
+/************************************************************/
+
 #include <stdio.h>
-#include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <stdlib.h>
 
-char *socket_path = "/var/run/nvidia-smi.sock";
+#define SOCK_PATH  "/var/run/nvidia-smi.sock"
+#define DATA "Hello from server"
 
-int main(int argc, char *argv[]) {
-  struct sockaddr_un addr;
-  char buf[100];
-  int fd,cl,rc;
+int main(void){
 
-  if (argc > 1) socket_path=argv[1];
-
-  if ( (fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-    perror("socket error");
-    exit(-1);
-  }
-
-  memset(&addr, 0, sizeof(addr));
-  addr.sun_family = AF_UNIX;
-  if (*socket_path == '\0') {
-    *addr.sun_path = '\0';
-    strncpy(addr.sun_path+1, socket_path+1, sizeof(addr.sun_path)-2);
-  } else {
-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path)-1);
-    unlink(socket_path);
-  }
-
-  if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-    perror("bind error");
-    exit(-1);
-  }
-
-  if (listen(fd, 5) == -1) {
-    perror("listen error");
-    exit(-1);
-  }
-
-  while (1) {
-    if ( (cl = accept(fd, NULL, NULL)) == -1) {
-      perror("accept error");
-      continue;
+    int server_sock, client_sock, len, rc;
+    int bytes_rec = 0;
+    struct sockaddr_un server_sockaddr;
+    struct sockaddr_un client_sockaddr;     
+    char buf[256];
+    int backlog = 10;
+    memset(&server_sockaddr, 0, sizeof(struct sockaddr_un));
+    memset(&client_sockaddr, 0, sizeof(struct sockaddr_un));
+    memset(buf, 0, 256);                
+    
+    /**************************************/
+    /* Create a UNIX domain stream socket */
+    /**************************************/
+    server_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_sock == -1){
+        printf("SOCKET ERROR: \n");
+        exit(1);
     }
-
-    while ( (rc=read(cl,buf,sizeof(buf))) > 0) {
-      printf("read %u bytes: %.*s\n", rc, rc, buf);
+    
+    /***************************************/
+    /* Set up the UNIX sockaddr structure  */
+    /* by using AF_UNIX for the family and */
+    /* giving it a filepath to bind to.    */
+    /*                                     */
+    /* Unlink the file so the bind will    */
+    /* succeed, then bind to that file.    */
+    /***************************************/
+    server_sockaddr.sun_family = AF_UNIX;   
+    strcpy(server_sockaddr.sun_path, SOCK_PATH); 
+    len = sizeof(server_sockaddr);
+    
+    unlink(SOCK_PATH);
+    rc = bind(server_sock, (struct sockaddr *) &server_sockaddr, len);
+    if (rc == -1){
+        printf("BIND ERROR: \n");
+        close(server_sock);
+        exit(1);
     }
+    
+    /*********************************/
+    /* Listen for any client sockets */
+    /*********************************/
+    rc = listen(server_sock, backlog);
+    if (rc == -1){ 
+        printf("LISTEN ERROR: \n");
+        close(server_sock);
+        exit(1);
+    }
+    printf("socket listening...\n");
+    
+    /*********************************/
+    /* Accept an incoming connection */
+    /*********************************/
+    client_sock = accept(server_sock, (struct sockaddr *) &client_sockaddr, &len);
+    if (client_sock == -1){
+        printf("ACCEPT ERROR: \n");
+        close(server_sock);
+        close(client_sock);
+        exit(1);
+    }
+    
+    /****************************************/
+    /* Get the name of the connected socket */
+    /****************************************/
+    len = sizeof(client_sockaddr);
+    rc = getpeername(client_sock, (struct sockaddr *) &client_sockaddr, &len);
+    if (rc == -1){
+        printf("GETPEERNAME ERROR: \n");
+        close(server_sock);
+        close(client_sock);
+        exit(1);
+    }
+    else {
+        printf("Client socket filepath: %s\n", client_sockaddr.sun_path);
+    }
+    
+    /************************************/
+    /* Read and print the data          */
+    /* incoming on the connected socket */
+    /************************************/
+    printf("waiting to read...\n");
+    bytes_rec = recv(client_sock, buf, sizeof(buf), 0);
+    if (bytes_rec == -1){
+        printf("RECV ERROR: \n");
+        close(server_sock);
+        close(client_sock);
+        exit(1);
+    }
+    else {
+        printf("DATA RECEIVED = %s\n", buf);
+    }
+    
+    /******************************************/
+    /* Send data back to the connected socket */
+    /******************************************/
+    memset(buf, 0, 256);
+    strcpy(buf, DATA);      
+    printf("Sending data...\n");
+    rc = send(client_sock, buf, strlen(buf), 0);
     if (rc == -1) {
-      perror("read");
-      exit(-1);
+        printf("SEND ERROR: ");
+        close(server_sock);
+        close(client_sock);
+        exit(1);
+    }   
+    else {
+        printf("Data sent!\n");
     }
-    else if (rc == 0) {
-      printf("EOF\n");
-      close(cl);
-    }
-  }
-
-
-  return 0;
+    
+    /******************************/
+    /* Close the sockets and exit */
+    /******************************/
+    close(server_sock);
+    close(client_sock);
+    
+    return 0;
 }
